@@ -1,0 +1,266 @@
+﻿using Newtonsoft.Json;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Net;
+using System.Net.Http;
+using System.Web.Http;
+using JasaIotServiceWebApi.App_Start;
+
+namespace JasaIotServiceWebApi.Controllers
+{
+    public class ValuesController : ApiController
+    {
+//        const string IOT_HUB_URL = "http://203.216.213.115/api/request/";    // IoT Hub の URL
+//        const string IOT_HUB_URL = "https://jasa-iotservice.hub.r-edge.org/api/request/";    // IoT Hub の URL
+        const string IOT_HUB_URL = "https://jasa.hub.r-edge.org/api/request/";    // IoT Hub の URL
+        const string SEND_CONTENT_TYPE = "application/json";
+
+
+        const int REQ_BED = 0;              // 入床・離床状態
+        const int REQ_SLEEP = 1;            // 睡眠の深さ
+
+        const string KEY_BED = "bed";
+        const string KEY_SLEEP = "sleep";
+
+        const string VAL_BED_OUT = "0";     // 離床
+        const string VAL_BED_IN = "1";      // 入床
+
+        const string VAL_SLEEP_0 = "0";     // 覚醒
+        const string VAL_SLEEP_1 = "1";     // うとうと
+        const string VAL_SLEEP_2 = "2";     // すやすや
+        const string VAL_SLEEP_3 = "3";     // ぐっすり
+        const string VAL_SLEEP_4 = "4";     // 底なし
+
+        private IotHubRequest request = new IotHubRequest();
+        private IotHubRequestList requests = new IotHubRequestList();
+        private int requestListCount = 0;
+
+        /// <summary>
+        /// ///////////////////////////////////////////////////////////////////
+        /// コマンド群
+        /// ///////////////////////////////////////////////////////////////////
+        /// </summary>
+
+        // 入床時のコマンド群
+        private string[] BEDIN_COMMANDS =
+        {
+//            ThingsCommandList.THING_BLIND1_ON,      // ブラインド1 を ON（多分不要）
+            ThingsCommandList.THING_BLIND2_ON,      // ブラインド2 を ON （ブラインド2だけは、ONにしてからでないと動いてくれないようだ）
+            ThingsCommandList.THING_BLIND1_CLOSE,   // ブラインド1 を閉じる
+            ThingsCommandList.THING_BLIND2_CLOSE,   // ブラインド2 を閉じる
+            ThingsCommandList.THING_BLIND3_CLOSE,   // ブラインド3 を閉じる
+            ThingsCommandList.THING_CEILING1_20,   // 天井照明1（ロフト） を OFF
+            ThingsCommandList.THING_CEILING2_20,    // 天井照明2（入口） を 20%
+            ThingsCommandList.THING_CEILING3_20,    // 天井照明3（奥） を 20%
+            ThingsCommandList.THING_OEL_ON,         // 有機EL を ON
+            ThingsCommandList.THING_RAPIRO_BEDIN,   // RAPIRO 入床
+            ThingsCommandList.THING_NULL            // コマンド終了
+        };
+
+        // 入眠時のコマンド群
+        private string[] SLEEP1_COMMANDS =
+        {
+            ThingsCommandList.THING_CEILING1_OFF,   // 天井照明1（ロフト） を OFF
+            ThingsCommandList.THING_CEILING2_OFF,   // 天井照明2（入口） を OFF
+            ThingsCommandList.THING_CEILING3_OFF,   // 天井照明3（奥） を OFF
+//            ThingsCommandList.THING_OEL_OFF,        // 有機EL を OFF
+//            ThingsCommandList.THING_OEL_DARKYELLOW,  // 有機EL を暗い黄色にする
+//            ThingsCommandList.THING_OEL_20,        // 有機EL を 20%
+            ThingsCommandList.THING_OEL_JOYATO,       // 有機EL を 20%
+            ThingsCommandList.THING_RAPIRO_SLEEP1,  // RAPIRO 入眠
+            ThingsCommandList.THING_NULL            // コマンド終了
+        };
+
+        // 朝、眠りが浅くなった時のコマンド群
+        private string[] WAKEUP_COMMANDS =
+        {
+            ThingsCommandList.THING_BLIND2_ON,      // ブラインド2 を ON （ブラインド2だけは、ONにしてからでないと動いてくれないようだ）
+            ThingsCommandList.THING_BLIND1_50,      // ブラインド1 を半開
+            ThingsCommandList.THING_BLIND2_50,      // ブラインド2 を半開
+            ThingsCommandList.THING_BLIND3_OPEN,    // ブラインド3 を全開
+            ThingsCommandList.THING_CEILING1_50,    // 天井照明1（ロフト） を 50%
+            ThingsCommandList.THING_CEILING2_50,    // 天井照明2（入口） を 50%
+            ThingsCommandList.THING_CEILING3_50,    // 天井照明3（奥） を 50%
+//            ThingsCommandList.THING_OEL_ON,         // 有機EL を ON
+            ThingsCommandList.THING_OEL_50,         // 有機EL を 50%
+            ThingsCommandList.THING_RAPIRO_NORMAL,  // RAPIRO 普通の目
+            ThingsCommandList.THING_RAPIRO_WAKEUP,  // RAPIRO 起床
+            ThingsCommandList.THING_NULL            // コマンド終了
+        };
+
+        // 朝、起きた時のコマンド群
+        private string[] GETUP_COMMANDS =
+        {
+            ThingsCommandList.THING_BLIND2_ON,      // ブラインド2 を ON （ブラインド2だけは、ONにしてからでないと動いてくれないようだ）
+            ThingsCommandList.THING_BLIND1_OPEN,    // ブラインド1 を半開
+            ThingsCommandList.THING_BLIND2_OPEN,    // ブラインド2 を半開
+            ThingsCommandList.THING_BLIND3_OPEN,    // ブラインド3 を全開
+            ThingsCommandList.THING_CEILING1_100,   // 天井照明1（ロフト） を 50%
+            ThingsCommandList.THING_CEILING2_100,   // 天井照明2（入口） を 50%
+            ThingsCommandList.THING_CEILING3_100,   // 天井照明3（奥） を 50%
+            ThingsCommandList.THING_OEL_ON,         // 有機EL を ON
+            ThingsCommandList.THING_OEL_100,        // 有機EL を 100%
+            ThingsCommandList.THING_RAPIRO_NORMAL,  // RAPIRO 普通の目
+            ThingsCommandList.THING_NULL            // コマンド終了
+        };
+
+        /// ///////////////////////////////////////////////////////////////////
+
+        private ThingsCommandList thingsCommandList = new ThingsCommandList();
+
+
+        public ValuesController()
+        {
+            request.commandList = new List<RequestCommand>();
+            request.commandList.Add(new RequestCommand("", "", ""));
+            requests.requestList = new List<IotHubRequest>();
+            requests.requestList.Add(new IotHubRequest(request));
+
+            //            request.ThingUuid = "a89c7bc9-23b8-4826-9620-8dff034cb05b";	// （旧）2018/05/21までのID
+            request.ThingUuid = "d962d67d-e52e-49ad-b59a-51bfc34a6d5e";		// （新）2018/05/22からのID
+            request.DriverId = "jp.co.planis.rapirodriverapp";
+
+            request.RedgeId = "78f92ebe-d7de-4388-80eb-946d828a29af";   // JASAスマホ
+//            request.RedgeId = "1bf66a08-e704-4a67-b1c6-b5e7903cd571";   // 吉栖スマホ1
+//            request.RedgeId = "0f86d341-66af-46be-81d4-beae76a962cb";   // 吉栖スマホ2
+            request.Sekisyo = "";
+        }
+
+        ~ValuesController()
+        {
+            // リストのデータは削除しておく。
+            requests.requestList[0].commandList.RemoveAt(0);
+            requests.requestList.RemoveAt(0);
+        }
+
+        // GET api/values
+        public IEnumerable<string> Get()
+        {
+            return new string[] { "", "" };
+        }
+
+        // GET api/values/5
+        public string Get(int id)
+        {
+            return "";
+        }
+
+        // POST api/values
+        public void Post([FromBody]string value)
+        {
+            switch (value)
+            {
+                case CommandConst.REQ_BEDIN:         // 入眠
+                    DoCommand(BEDIN_COMMANDS);
+                    break;
+                case CommandConst.REQ_SLEEP1:        // 入眠
+                    DoCommand(SLEEP1_COMMANDS);
+                    break;
+                case CommandConst.REQ_WAKEUP:        // 朝、眠りが浅い（→起こす）
+                    DoCommand(WAKEUP_COMMANDS);
+                    break;
+                case CommandConst.REQ_GETUP:         // 覚醒（離床）
+                    DoCommand(GETUP_COMMANDS);
+                    break;
+                default:                // その他のコマンドを受けた時は、何もしない。
+                    break;
+            }
+
+            return;
+        }
+
+        // PUT api/values/5
+        public void Put(int id, [FromBody]string value)
+        {
+            switch (id)
+            {
+                case CommandConst.REQID_BEDIN:         // 入眠
+                    DoCommand(BEDIN_COMMANDS);
+                    break;
+                case CommandConst.REQID_SLEEP1:        // 入眠
+                    DoCommand(SLEEP1_COMMANDS);
+                    break;
+                case CommandConst.REQID_WAKEUP:        // 朝、眠りが浅い（→起こす）
+                    DoCommand(WAKEUP_COMMANDS);
+                    break;
+                case CommandConst.REQID_GETUP:         // 覚醒（離床）
+                    DoCommand(GETUP_COMMANDS);
+                    break;
+                default:                // その他のコマンドを受けた時は、何もしない。
+                    break;
+            }
+
+            return;
+        }
+
+        private void DoCommand(string[] commands)
+        {
+            int ite = 0;
+            int cmdNo = 0;
+
+            do
+            {
+                cmdNo = thingsCommandList.Find(commands[ite]);
+                if (cmdNo < 0)      // コマンドが見つからなければ終了（NULL）
+                {
+                    break;
+                }
+
+                requests.requestList[0].ThingUuid = ThingsCommandList.dictionary[cmdNo].thingsUuid;
+                requests.requestList[0].DriverId = ThingsCommandList.dictionary[cmdNo].driverId;
+                requests.requestList[0].RedgeId = "78f92ebe-d7de-4388-80eb-946d828a29af";   // JASAスマホ
+//                requests.requestList[0].RedgeId = "1bf66a08-e704-4a67-b1c6-b5e7903cd571";   // 吉栖スマホ1
+//                requests.requestList[0].RedgeId = "0f86d341-66af-46be-81d4-beae76a962cb";   // 吉栖スマホ2
+                requests.requestList[0].Sekisyo = ThingsCommandList.dictionary[cmdNo].sekisyo;
+
+                requests.requestList[0].commandList[0].CommandType = ThingsCommandList.dictionary[cmdNo].commandType;
+                requests.requestList[0].commandList[0].CommandCode = ThingsCommandList.dictionary[cmdNo].commandCode;
+                requests.requestList[0].commandList[0].CommandValue = ThingsCommandList.dictionary[cmdNo].commandValue;
+
+                Send("POST", requests);
+                ++ite;
+            } while (cmdNo >= 0);
+
+            return;
+        }
+
+
+        // DELETE api/values/5
+        public void Delete(int id)
+        {
+            return;
+        }
+
+        private void Send(string method, IotHubRequestList aRequests)
+        {
+            // シリアライズ
+            string json = JsonConvert.SerializeObject(aRequests, Formatting.None);
+
+            // 送信する文字列をバイト型配列に変換
+            byte[] putDataBytes = System.Text.Encoding.UTF8.GetBytes(json);
+
+            // WebRequest の作成
+            System.Net.WebRequest webReq = System.Net.WebRequest.Create(IOT_HUB_URL);
+            // メソッドに PUT を指定
+            webReq.Method = method;
+
+            // ContentType を設定
+            webReq.ContentType = SEND_CONTENT_TYPE;
+
+            // API_KEY のBasic認証を追加
+            webReq.Headers.Add(CommandConst.API_KEY_HEADER, CommandConst.API_KEY_VALUE);
+
+            // 送信するデータの長さを指定
+            webReq.ContentLength = putDataBytes.Length;
+
+            // データを送信するためのStreamを取得
+            System.IO.Stream reqStream = webReq.GetRequestStream();
+            // 送信するデータを書き込む
+            reqStream.Write(putDataBytes, 0, putDataBytes.Length);
+            reqStream.Close();
+
+            return;
+        }
+    }
+}

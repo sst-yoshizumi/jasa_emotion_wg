@@ -1,0 +1,1 @@
+include ':app', ':epaapi-release', ':imsif-release'
